@@ -579,6 +579,51 @@
                 font-size: 2em;
             }
         }
+
+        /* Voice Display Styles */
+        .voices-display {
+            border-radius: 5px;
+            margin-top: 20px;
+            font-family: Arial, sans-serif;
+            font-size: 14px;
+        }
+
+        .voices-list {
+            padding: 10px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+
+        .voice-item {
+            background: #e9e9e9;
+            padding: 5px 10px;
+            border-radius: 15px;
+            border: 1px solid #ccc;
+            font-size: 12px;
+            white-space: nowrap;
+        }
+
+        .voice-item.hebrew {
+            background: #e8f5e8;
+            border-color: #4caf50;
+            font-weight: bold;
+        }
+
+        .words-list {
+            padding: 10px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 5px;
+        }
+
+        .word-item {
+            background: #e0e7ff;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 12px;
+            border: 1px solid #c3d4ff;
+        }
     </style>
 </head>
 
@@ -626,6 +671,14 @@
 
             <button class="btn next-word-btn" id="nextWordBtn">➡️ מילה הבאה</button>
         </div>
+    </div>
+
+    <!-- Voice Display -->
+    <div id="voicesDisplay" class="voices-display">
+        <div class="voices-list" id="voicesList">
+            <!-- Voices will be populated dynamically -->
+        </div>
+        <div class="words-list" id="wordsList"></div>
     </div>
 
     <script>
@@ -1516,6 +1569,99 @@
                 });
             }
 
+            populateWordsDisplay() {
+                const wordsList = document.getElementById('wordsList');
+                if (!wordsList) {
+                    console.log('wordsList element not found');
+                    return;
+                }
+
+                const allWords = [];
+                
+                // Collect all words with their emojis
+                Object.keys(this.words).forEach(letter => {
+                    ['start', 'middle', 'end'].forEach(position => {
+                        if (this.words[letter][position]) {
+                            this.words[letter][position].slice(0, 2).forEach(wordObj => {
+                                allWords.push(`${wordObj.emoji} ${wordObj.word}`);
+                            });
+                        }
+                    });
+                });
+
+                console.log('Total words collected:', allWords.length);
+
+                // Clear existing content
+                wordsList.innerHTML = '';
+
+                // Display first 30 words to avoid overcrowding
+                allWords.forEach(wordText => {
+                    const wordItem = document.createElement('span');
+                    wordItem.className = 'word-item';
+                    wordItem.textContent = wordText;
+                    wordsList.appendChild(wordItem);
+                });
+
+                console.log('Words display populated with', allWords.length, 'words');
+            }
+
+            populateVoicesDisplay() {
+                const voicesList = document.getElementById('voicesList');
+                if (!voicesList) {
+                    console.log('voicesList element not found');
+                    return;
+                }
+
+                // Clear existing content
+                voicesList.innerHTML = '';
+
+                // Get available voices
+                const voices = speechSynthesis.getVoices();
+                
+                if (voices.length === 0) {
+                    // If no voices loaded yet, try again after a short delay
+                    setTimeout(() => this.populateVoicesDisplay(), 100);
+                    voicesList.innerHTML = '<div class="voice-item">Loading voices...</div>';
+                    return;
+                }
+
+                console.log('Total voices available:', voices.length);
+
+                // Separate Hebrew and other voices
+                const hebrewVoices = voices.filter(voice => 
+                    voice.lang.startsWith('he') || voice.lang.includes('IL')
+                );
+                const otherVoices = voices.filter(voice => 
+                    !voice.lang.startsWith('he') && !voice.lang.includes('IL')
+                );
+
+                // Combine Hebrew first, then others (limit to 8 total)
+                const prioritizedVoices = [
+                    ...hebrewVoices.slice(0, 3),
+                    ...otherVoices.slice(0, 5)
+                ];
+
+                // Display voices
+                prioritizedVoices.forEach((voice) => {
+                    const voiceItem = document.createElement('div');
+                    voiceItem.className = 'voice-item';
+                    
+                    // Add hebrew class for Hebrew voices
+                    if (voice.lang.startsWith('he') || voice.lang.includes('IL')) {
+                        voiceItem.classList.add('hebrew');
+                    }
+                    
+                    // Shorter display format
+                    let voiceText = voice.lang;
+                    if (voice.default) voiceText += ' ⭐';
+                    
+                    voiceItem.textContent = voiceText;
+                    voicesList.appendChild(voiceItem);
+                });
+
+                console.log('Voices display populated with', prioritizedVoices.length, 'voices');
+            }
+
             initializeUI() {
                 // Hebrew alphabet in correct order א-ת
                 const hebrewAlphabet = [
@@ -1538,6 +1684,10 @@
 
                 this.updateScore();
                 this.updateSimilarityScore();
+                
+                // Populate displays after DOM elements are ready
+                this.populateWordsDisplay();
+                this.populateVoicesDisplay();
             }
 
             setupEventListeners() {
@@ -1598,15 +1748,8 @@
                         // Cancel any ongoing speech
                         speechSynthesis.cancel();
                         
-                        // Wait for voices to be loaded with longer timeout for mobile
-                        const voices = speechSynthesis.getVoices();
-                        if (voices.length === 0) {
-                            // If voices aren't loaded yet, wait for them
-                            await new Promise(resolve => {
-                                speechSynthesis.onvoiceschanged = resolve;
-                                setTimeout(resolve, 2000); // Longer timeout for mobile
-                            });
-                        }
+                        // Wait for voices to be loaded with Promise-based approach
+                        const voices = await this.waitForVoices();
 
                         const utterance = new SpeechSynthesisUtterance(this.currentWord.word);
                         
@@ -1692,22 +1835,56 @@
             }
 
             playWordWithFallback() {
-                // Fallback method for mobile browsers that don't support Hebrew TTS
+                // Try Google Translate TTS as fallback for Hebrew
+                this.tryGoogleTTSFallback();
+            }
+
+            async tryGoogleTTSFallback() {
+                try {
+                    // Use Google Translate TTS API as fallback
+                    const word = encodeURIComponent(this.currentWord.word);
+                    const audioUrl = `https://translate.google.com/translate_tts?ie=UTF-8&tl=he&client=tw-ob&q=${word}`;
+                    
+                    const audio = new Audio(audioUrl);
+                    audio.crossOrigin = 'anonymous';
+                    
+                    audio.onload = () => {
+                        this.showFeedback('🌐 משתמש בקול גוגל לעברית', 'info');
+                    };
+                    
+                    audio.onerror = () => {
+                        console.log('Google TTS fallback failed, using English TTS');
+                        this.useEnglishTTSFallback();
+                    };
+                    
+                    await audio.play();
+                    
+                } catch (error) {
+                    console.error('Google TTS fallback failed:', error);
+                    this.useEnglishTTSFallback();
+                }
+            }
+
+            useEnglishTTSFallback() {
+                // Final fallback - use English TTS with Hebrew text
                 try {
                     const utterance = new SpeechSynthesisUtterance(this.currentWord.word);
-                    utterance.lang = 'en-US'; // Use English as absolute fallback
-                    utterance.rate = 0.6;
+                    utterance.lang = 'en-US'; // Use English voice
+                    utterance.rate = 0.4; // Very slow to help with Hebrew pronunciation
                     utterance.pitch = 1.0;
                     
                     utterance.onerror = (event) => {
-                        console.error('Fallback speech error:', event.error);
+                        console.error('English TTS fallback error:', event.error);
                         this.showFeedback('🔊 השמעת קול לא זמינה - השתמש בהקלטה שלך', 'info');
                     };
                     
+                    utterance.onstart = () => {
+                        this.showFeedback('🔊 משתמש בקול אנגלי (ייתכן שהמבטא לא מדויק)', 'warning');
+                    };
+                    
                     speechSynthesis.speak(utterance);
-                    this.showFeedback('משתמש בקול חלופי', 'info');
                 } catch (error) {
-                    console.error('Fallback speech failed:', error);
+                    console.error('All TTS methods failed:', error);
                     this.showFeedback('🔊 השמעת קול לא זמינה - השתמש בהקלטה שלך', 'info');
                 }
             }
@@ -2186,6 +2363,67 @@
                     feedback.style.display = 'none';
                 }, 3000);
             }
+
+            // Promise-based voice loading
+            waitForVoices() {
+                return new Promise((resolve) => {
+                    let voices = speechSynthesis.getVoices();
+                    
+                    // If voices are already loaded, resolve immediately
+                    if (voices.length > 0) {
+                        console.log('Voices already loaded:', voices.length);
+                        resolve(voices);
+                        return;
+                    }
+                    
+                    // If no voices, wait for them to load
+                    console.log('Waiting for voices to load...');
+                    
+                    let attempts = 0;
+                    const maxAttempts = 10;
+                    
+                    const checkVoices = () => {
+                        voices = speechSynthesis.getVoices();
+                        attempts++;
+                        
+                        if (voices.length > 0) {
+                            console.log(`Voices loaded after ${attempts} attempts:`, voices.length);
+                            resolve(voices);
+                        } else if (attempts >= maxAttempts) {
+                            console.log('Max attempts reached, resolving with empty voices');
+                            resolve(voices);
+                        } else {
+                            // Try again after a short delay
+                            setTimeout(checkVoices, 200);
+                        }
+                    };
+                    
+                    // Listen for voice changes
+                    const onVoicesChanged = () => {
+                        voices = speechSynthesis.getVoices();
+                        if (voices.length > 0) {
+                            console.log('Voices loaded via onvoiceschanged:', voices.length);
+                            speechSynthesis.removeEventListener('voiceschanged', onVoicesChanged);
+                            resolve(voices);
+                        }
+                    };
+                    
+                    speechSynthesis.addEventListener('voiceschanged', onVoicesChanged);
+                    
+                    // Start checking
+                    checkVoices();
+                    
+                    // Fallback timeout
+                    setTimeout(() => {
+                        speechSynthesis.removeEventListener('voiceschanged', onVoicesChanged);
+                        console.log('Voice loading timeout, resolving with available voices');
+                        const finalVoices = speechSynthesis.getVoices();
+                        resolve(finalVoices);
+                    }, 15000);
+                });
+            }
+
+            // Voices will be displayed in static HTML section
         }
 
         // Initialize the game when the page loads
@@ -2193,501 +2431,6 @@
             new HebrewLetterGame();
         });
     </script>
-</body>
-</html>
-    {word: 'מכסה', translation: 'מכסה', emoji: '🎩'},
-    {word: 'חכה', translation: 'חכה', emoji: '⏳'}
-    ],
-    end: [
-    {word: 'רק', translation: 'רק', emoji: '☝️'},
-    {word: 'חזק', translation: 'חזק', emoji: '💪'},
-    {word: 'רחוק', translation: 'רחוק', emoji: '🏔️'},
-    {word: 'קרוב', translation: 'קרוב', emoji: '🤏'},
-    {word: 'ילך', translation: 'ילך', emoji: '🚶'},
-    {word: 'בלק', translation: 'בלק', emoji: '⚡'},
-    {word: 'מלך', translation: 'מלך', emoji: '👑'},
-    {word: 'הלך', translation: 'הלך', emoji: '🚶'},
-    {word: 'אלך', translation: 'אלך', emoji: '🚶'},
-    {word: 'נלך', translation: 'נלך', emoji: '👥'}
-    ]
-    },
-    'ל': {
-    start: [
-    {word: 'לב', translation: 'לב', emoji: '❤️'},
-    {word: 'לחם', translation: 'לחם', emoji: '🍞'},
-    {word: 'לילה', translation: 'לילה', emoji: '🌙'},
-    {word: 'לימון', translation: 'לימון', emoji: '🍋'},
-    {word: 'ליצן', translation: 'ליצן', emoji: '🤡'},
-    {word: 'לוח', translation: 'לוח', emoji: '📋'},
-    {word: 'לשון', translation: 'לשון', emoji: '👅'},
-    {word: 'לבן', translation: 'לבן', emoji: '⚪'},
-    {word: 'לוז', translation: 'לוז', emoji: '🌰'},
-    {word: 'לקח', translation: 'לקח', emoji: '📚'}
-    ],
-    middle: [
-    {word: 'מלך', translation: 'מלך', emoji: '👑'},
-    {word: 'חלק', translation: 'חלק', emoji: '🍰'},
-    {word: 'דלת', translation: 'דלת', emoji: '🚪'},
-    {word: 'זלזל', translation: 'זלזל', emoji: '😒'},
-    {word: 'פלפל', translation: 'פלפל', emoji: '🌶️'},
-    {word: 'גלגל', translation: 'גלגל', emoji: '🎡'},
-    {word: 'בלון', translation: 'בלון', emoji: '🎈'},
-    {word: 'סלט', translation: 'סלט', emoji: '🥗'},
-    {word: 'אולי', translation: 'אולי', emoji: '🤔'},
-    {word: 'קולג\'ה', translation: 'קולג\'ה', emoji: '🎨'}
-    ],
-    end: [
-    {word: 'אכל', translation: 'אכל', emoji: '🍽️'},
-    {word: 'שאל', translation: 'שאל', emoji: '❓'},
-    {word: 'פעל', translation: 'פעל', emoji: '⚡'},
-    {word: 'רגל', translation: 'רגל', emoji: '🦵'},
-    {word: 'דגל', translation: 'דגל', emoji: '🏳️'},
-    {word: 'נפל', translation: 'נפל', emoji: '⬇️'},
-    {word: 'הלל', translation: 'הלל', emoji: '🙌'},
-    {word: 'גלל', translation: 'גלל', emoji: '🔄'},
-    {word: 'בלל', translation: 'בלל', emoji: '🥄'},
-    {word: 'מלל', translation: 'מלל', emoji: '🗣️'}
-    ]
-    },
-    'מ': {
-    start: [
-    {word: 'מים', translation: 'מים', emoji: '💧'},
-    {word: 'מלך', translation: 'מלך', emoji: '👑'},
-    {word: 'מכונית', translation: 'מכונית', emoji: '🚗'},
-    {word: 'מטוס', translation: 'מטוס', emoji: '✈️'},
-    {word: 'מגן', translation: 'מגן', emoji: '🛡️'},
-    {word: 'מחשב', translation: 'מחשב', emoji: '💻'},
-    {word: 'מנורה', translation: 'מנורה', emoji: '💡'},
-    {word: 'מפתח', translation: 'מפתח', emoji: '🔑'},
-    {word: 'מקום', translation: 'מקום', emoji: '📍'},
-    {word: 'מספר', translation: 'מספר', emoji: '🔢'}
-    ],
-    middle: [
-    {word: 'אמא', translation: 'אמא', emoji: '👩'},
-    {word: 'שמש', translation: 'שמש', emoji: '☀️'},
-    {word: 'דם', translation: 'דם', emoji: '🩸'},
-    {word: 'קמח', translation: 'קמח', emoji: '🌾'},
-    {word: 'שמח', translation: 'שמח', emoji: '😊'},
-    {word: 'אמת', translation: 'אמת', emoji: '✅'},
-    {word: 'זמן', translation: 'זמן', emoji: '⏰'},
-    {word: 'גמל', translation: 'גמל', emoji: '🐪'},
-    {word: 'חמש', translation: 'חמש', emoji: '5️⃣'},
-    {word: 'שמיים', translation: 'שמיים', emoji: '☁️'}
-    ],
-    end: [
-    {word: 'חם', translation: 'חם', emoji: '🔥'},
-    {word: 'שם', translation: 'שם', emoji: '📛'},
-    {word: 'עם', translation: 'עם', emoji: '👥'},
-    {word: 'דם', translation: 'דם', emoji: '🩸'},
-    {word: 'רם', translation: 'רם', emoji: '⬆️'},
-    {word: 'תם', translation: 'תם', emoji: '✅'},
-    {word: 'גם', translation: 'גם', emoji: '➕'},
-    {word: 'אם', translation: 'אם', emoji: '❓'},
-    {word: 'יום', translation: 'יום', emoji: '📅'},
-    {word: 'קום', translation: 'קום', emoji: '⬆️'}
-    ]
-    },
-    'נ': {
-    start: [
-    {word: 'נחש', translation: 'נחש', emoji: '🐍'},
-    {word: 'נר', translation: 'נר', emoji: '🕯️'},
-    {word: 'נמר', translation: 'נמר', emoji: '🐅'},
-    {word: 'נעל', translation: 'נעל', emoji: '👟'},
-    {word: 'נשר', translation: 'נשר', emoji: '🦅'},
-    {word: 'נייר', translation: 'נייר', emoji: '📄'},
-    {word: 'נדנדה', translation: 'נדנדה', emoji: '🛝'},
-    {word: 'נפח', translation: 'נפח', emoji: '🔧'},
-    {word: 'נוצה', translation: 'נוצה', emoji: '🪶'},
-    {word: 'נקניק', translation: 'נקניק', emoji: '🌭'}
-    ],
-    middle: [
-    {word: 'בנק', translation: 'בנק', emoji: '🏦'},
-    {word: 'ענק', translation: 'ענק', emoji: '👹'},
-    {word: 'חנות', translation: 'חנות', emoji: '🏪'},
-    {word: 'שונה', translation: 'שונה', emoji: '🔀'},
-    {word: 'דונת', translation: 'דונת', emoji: '🍩'},
-    {word: 'תנור', translation: 'תנור', emoji: '🔥'},
-    {word: 'מנה', translation: 'מנה', emoji: '🍽️'},
-    {word: 'סנטר', translation: 'סנטר', emoji: '🏢'},
-    {word: 'קנה', translation: 'קנה', emoji: '🛒'},
-    {word: 'ענף', translation: 'ענף', emoji: '🌿'}
-    ],
-    end: [
-    {word: 'בן', translation: 'בן', emoji: '👦'},
-    {word: 'כן', translation: 'כן', emoji: '✅'},
-    {word: 'לא', translation: 'לא', emoji: '❌'},
-    {word: 'זמן', translation: 'זמן', emoji: '⏰'},
-    {word: 'חן', translation: 'חן', emoji: '😇'},
-    {word: 'דן', translation: 'דן', emoji: '👨'},
-    {word: 'פן', translation: 'פן', emoji: '📐'},
-    {word: 'גן', translation: 'גן', emoji: '🌳'},
-    {word: 'רן', translation: 'רן', emoji: '🎵'},
-    {word: 'תן', translation: 'תן', emoji: '🤲'}
-    ]
-    },
-    'ס': {
-    start: [
-    {word: 'סוס', translation: 'סוס', emoji: '🐎'},
-    {word: 'ספר', translation: 'ספר', emoji: '📚'},
-    {word: 'סכין', translation: 'סכין', emoji: '🔪'},
-    {word: 'סבא', translation: 'סבא', emoji: '👴'},
-    {word: 'סלט', translation: 'סלט', emoji: '🥗'},
-    {word: 'סיר', translation: 'סיר', emoji: '🍲'},
-    {word: 'סמל', translation: 'סמל', emoji: '🎖️'},
-    {word: 'סטייק', translation: 'סטייק', emoji: '🥩'},
-    {word: 'סוכר', translation: 'סוכר', emoji: '🍯'},
-    {word: 'סרט', translation: 'סרט', emoji: '🎬'}
-    ],
-    middle: [
-    {word: 'כיסא', translation: 'כיסא', emoji: '🪑'},
-    {word: 'מסיבה', translation: 'מסיבה', emoji: '🎉'},
-    {word: 'נסיעה', translation: 'נסיעה', emoji: '🚗'},
-    {word: 'חסידה', translation: 'חסידה', emoji: '🦢'},
-    {word: 'קסם', translation: 'קסם', emoji: '✨'},
-    {word: 'רוסיה', translation: 'רוסיה', emoji: '🇷🇺'},
-    {word: 'אסור', translation: 'אסור', emoji: '🚫'},
-    {word: 'בסיס', translation: 'בסיס', emoji: '🏗️'},
-    {word: 'מוסיקה', translation: 'מוסיקה', emoji: '🎵'},
-    {word: 'קוסם', translation: 'קוסם', emoji: '🪄'}
-    ],
-    end: [
-    {word: 'כוס', translation: 'כוס', emoji: '🥛'},
-    {word: 'בוס', translation: 'בוס', emoji: '👔'},
-    {word: 'אוטובוס', translation: 'אוטובוס', emoji: '🚌'},
-    {word: 'חמוס', translation: 'חמוס', emoji: '🐹'},
-    {word: 'פלוס', translation: 'פלוס', emoji: '➕'},
-    {word: 'מינוס', translation: 'מינוס', emoji: '➖'},
-    {word: 'קוקוס', translation: 'קוקוס', emoji: '🥥'},
-    {word: 'לוטוס', translation: 'לוטוס', emoji: '🪷'},
-    {word: 'קמפוס', translation: 'קמפוס', emoji: '🏫'},
-    {word: 'סירקוס', translation: 'סירקוס', emoji: '🎪'}
-    ]
-    },
-    'ע': {
-    start: [
-    {word: 'עין', translation: 'עין', emoji: '👁️'},
-    {word: 'עץ', translation: 'עץ', emoji: '🌳'},
-    {word: 'עוגה', translation: 'עוגה', emoji: '🎂'},
-    {word: 'עכבר', translation: 'עכבר', emoji: '🐭'},
-    {word: 'עגל', translation: 'עגל', emoji: '🐄'},
-    {word: 'עלה', translation: 'עלה', emoji: '🍃'},
-    {word: 'ענן', translation: 'ענן', emoji: '☁️'},
-    {word: 'עורב', translation: 'עורב', emoji: '🐦‍⬛'},
-    {word: 'עטלף', translation: 'עטלף', emoji: '🦇'},
-    {word: 'עפרון', translation: 'עפרון', emoji: '✏️'}
-    ],
-    middle: [
-    {word: 'שעון', translation: 'שעון', emoji: '⏰'},
-    {word: 'מעיל', translation: 'מעיל', emoji: '🧥'},
-    {word: 'דעת', translation: 'דעת', emoji: '🧠'},
-    {word: 'רעב', translation: 'רעב', emoji: '🍽️'},
-    {word: 'פעמון', translation: 'פעמון', emoji: '🔔'},
-    {word: 'תעלה', translation: 'תעלה', emoji: '🚢'},
-    {word: 'צעיר', translation: 'צעיר', emoji: '👦'},
-    {word: 'קעקוע', translation: 'קעקוע', emoji: '🎨'},
-    {word: 'בעיה', translation: 'בעיה', emoji: '❗'},
-    {word: 'טעות', translation: 'טעות', emoji: '❌'}
-    ],
-    end: [
-    {word: 'רע', translation: 'רע', emoji: '😠'},
-    {word: 'בע', translation: 'בע', emoji: '😱'},
-    {word: 'לע', translation: 'לע', emoji: '👅'},
-    {word: 'דע', translation: 'דע', emoji: '🧠'},
-    {word: 'צע', translation: 'צע', emoji: '🎯'},
-    {word: 'פע', translation: 'פע', emoji: '⚡'},
-    {word: 'קע', translation: 'קע', emoji: '📢'},
-    {word: 'שע', translation: 'שע', emoji: '⏰'},
-    {word: 'תע', translation: 'תע', emoji: '🔀'},
-    {word: 'נע', translation: 'נע', emoji: '🚶'}
-    ]
-    },
-    'פ': {
-    start: [
-    {word: 'פיל', translation: 'פיל', emoji: '🐘'},
-    {word: 'פרח', translation: 'פרח', emoji: '🌸'},
-    {word: 'פנים', translation: 'פנים', emoji: '😊'},
-    {word: 'פה', translation: 'פה', emoji: '👄'},
-    {word: 'פרפר', translation: 'פרפר', emoji: '🦋'},
-    {word: 'פיצה', translation: 'פיצה', emoji: '🍕'},
-    {word: 'פלפל', translation: 'פלפל', emoji: '🌶️'},
-    {word: 'פנס', translation: 'פנס', emoji: '🔦'},
-    {word: 'פטל', translation: 'פטל', emoji: '🍓'},
-    {word: 'פינגווין', translation: 'פינגווין', emoji: '🐧'}
-    ],
-    middle: [
-    {word: 'אפונה', translation: 'אפונה', emoji: '🟢'},
-    {word: 'שיפוד', translation: 'שיפוד', emoji: '🍢'},
-    {word: 'אפיק', translation: 'אפיק', emoji: '🏞️'},
-    {word: 'לופה', translation: 'לופה', emoji: '🧽'},
-    {word: 'שופר', translation: 'שופר', emoji: '📯'},
-    {word: 'אפס', translation: 'אפס', emoji: '0️⃣'},
-    {word: 'רופא', translation: 'רופא', emoji: '👨‍⚕️'},
-    {word: 'גרף', translation: 'גרף', emoji: '📊'},
-    {word: 'שפע', translation: 'שפע', emoji: '🌊'},
-    {word: 'אלף', translation: 'אלף', emoji: '1️⃣'}
-    ],
-    end: [
-    {word: 'כף', translation: 'כף', emoji: '🥄'},
-    {word: 'אף', translation: 'אף', emoji: '👃'},
-    {word: 'שף', translation: 'שף', emoji: '👨‍🍳'},
-    {word: 'דף', translation: 'דף', emoji: '📄'},
-    {word: 'חף', translation: 'חף', emoji: '🏖️'},
-    {word: 'רף', translation: 'רף', emoji: '📚'},
-    {word: 'עף', translation: 'עף', emoji: '✈️'},
-    {word: 'צף', translation: 'צף', emoji: '🏊'},
-    {word: 'תף', translation: 'תף', emoji: '🥁'},
-    {word: 'קף', translation: 'קף', emoji: '🔄'}
-    ]
-    },
-    'צ': {
-    start: [
-    {word: 'צב', translation: 'צב', emoji: '🐢'},
-    {word: 'צפרדע', translation: 'צפרדע', emoji: '🐸'},
-    {word: 'צהוב', translation: 'צהוב', emoji: '🟡'},
-    {word: 'צוואר', translation: 'צוואר', emoji: '🦒'},
-    {word: 'צלחת', translation: 'צלחת', emoji: '🍽️'},
-    {word: 'צמח', translation: 'צמח', emoji: '🌱'},
-    {word: 'ציפור', translation: 'ציפור', emoji: '🐦'},
-    {word: 'צדפה', translation: 'צדפה', emoji: '🐚'},
-    {word: 'צנצנת', translation: 'צנצנת', emoji: '🫙'},
-    {word: 'צלם', translation: 'צלם', emoji: '📸'}
-    ],
-    middle: [
-    {word: 'עץ', translation: 'עץ', emoji: '🌳'},
-    {word: 'בצל', translation: 'בצל', emoji: '🧅'},
-    {word: 'ביצה', translation: 'ביצה', emoji: '🥚'},
-    {word: 'רצפה', translation: 'רצפה', emoji: '🏠'},
-    {word: 'מצב', translation: 'מצב', emoji: '📊'},
-    {word: 'קצב', translation: 'קצב', emoji: '🥩'},
-    {word: 'אצבע', translation: 'אצבע', emoji: '👆'},
-    {word: 'מצפן', translation: 'מצפן', emoji: '🧭'},
-    {word: 'שצף', translation: 'שצף', emoji: '🌊'},
-    {word: 'נצח', translation: 'נצח', emoji: '🏆'}
-    ],
-    end: [
-    {word: 'חץ', translation: 'חץ', emoji: '🏹'},
-    {word: 'קץ', translation: 'קץ', emoji: '🔚'},
-    {word: 'רץ', translation: 'רץ', emoji: '🏃'},
-    {word: 'שץ', translation: 'שץ', emoji: '💎'},
-    {word: 'פץ', translation: 'פץ', emoji: '💥'},
-    {word: 'בץ', translation: 'בץ', emoji: '🎯'},
-    {word: 'גץ', translation: 'גץ', emoji: '⚡'},
-    {word: 'לץ', translation: 'לץ', emoji: '🤡'},
-    {word: 'מץ', translation: 'מץ', emoji: '🤏'},
-    {word: 'נץ', translation: 'נץ', emoji: '🦅'}
-    ]
-    },
-    'ק': {
-    start: [
-    {word: 'קוף', translation: 'קוף', emoji: '🐵'},
-    {word: 'קפה', translation: 'קפה', emoji: '☕'},
-    {word: 'קול', translation: 'קול', emoji: '🔊'},
-    {word: 'קיץ', translation: 'קיץ', emoji: '☀️'},
-    {word: 'קשת', translation: 'קשת', emoji: '🌈'},
-    {word: 'קן', translation: 'קן', emoji: '🪺'},
-    {word: 'קרח', translation: 'קרח', emoji: '🧊'},
-    {word: 'קופסה', translation: 'קופסה', emoji: '📦'},
-    {word: 'קציר', translation: 'קציר', emoji: '🌾'},
-    {word: 'קדרה', translation: 'קדרה', emoji: '🍲'}
-    ],
-    middle: [
-    {word: 'חקלאי', translation: 'חקלאי', emoji: '👨‍🌾'},
-    {word: 'מקום', translation: 'מקום', emoji: '📍'},
-    {word: 'תקווה', translation: 'תקווה', emoji: '🙏'},
-    {word: 'שקט', translation: 'שקט', emoji: '🤫'},
-    {word: 'נקי', translation: 'נקי', emoji: '✨'},
-    {word: 'דקה', translation: 'דקה', emoji: '⏰'},
-    {word: 'צקצוק', translation: 'צקצוק', emoji: '🔊'},
-    {word: 'פקק', translation: 'פקק', emoji: '🍾'},
-    {word: 'רקע', translation: 'רקע', emoji: '🖼️'},
-    {word: 'שקל', translation: 'שקל', emoji: '💰'}
-    ],
-    end: [
-    {word: 'חזק', translation: 'חזק', emoji: '💪'},
-    {word: 'רק', translation: 'רק', emoji: '☝️'},
-    {word: 'זק', translation: 'זק', emoji: '⚡'},
-    {word: 'דק', translation: 'דק', emoji: '📏'},
-    {word: 'בק', translation: 'בק', emoji: '🎯'},
-    {word: 'לק', translation: 'לק', emoji: '💅'},
-    {word: 'שק', translation: 'שק', emoji: '🎒'},
-    {word: 'פק', translation: 'פק', emoji: '📦'},
-    {word: 'נק', translation: 'נק', emoji: '🔗'},
-    {word: 'חק', translation: 'חק', emoji: '📜'}
-    ]
-    },
-    'ר': {
-    start: [
-    {word: 'רגל', translation: 'רגל', emoji: '🦵'},
-    {word: 'ראש', translation: 'ראש', emoji: '🗣️'},
-    {word: 'רכב', translation: ' '🥇'},
-    {word: 'כלב', translation: 'כלב', emoji: '🐕'},
-    {word: 'חלב', translation: 'חלב', emoji: '🥛'},
-    {word: 'ערב', translation: 'ערב', emoji: '🌆'},
-    {word: 'קרב', translation: 'קרב', emoji: '⚔️'},
-    {word: 'כתב', translation: 'כתב', emoji: '✍️'},
-    {word: 'ריב', translation: 'ריב', emoji: '😠'},
-    {word: 'שב', translation: 'שב', emoji: '💺'},
-    {word: 'רב', translation: 'רב', emoji: '👨‍🏫'}
-    ]
-    },
-    'ג': {
-    start: [
-    {word: 'גמל', translation: 'גמל', emoji: '🐪'},
-    {word: 'גן', translation: 'גן', emoji: '🌳'},
-    {word: 'גבינה', translation: 'גבינה', emoji: '🧀'},
-    {word: 'גיטרה', translation: 'גיטרה', emoji: '🎸'},
-    {word: 'גזר', translation: 'גזר', emoji: '🥕'},
-    {word: 'גלידה', translation: 'גלידה', emoji: '🍦'},
-    {word: 'גרביים', translation: 'גרביים', emoji: '🧦'},
-    {word: 'גבר', translation: 'גבר', emoji: '👨'},
-    {word: 'גולף', translation: 'גולף', emoji: '⛳'},
-    {word: 'גדר', translation: 'גדר', emoji: '🚧'}
-    ],
-    middle: [
-    {word: 'דגל', translation: 'דגל', emoji: '🏳️'},
-    {word: 'מגן', translation: 'מגן', emoji: '🛡️'},
-    {word: 'נגר', translation: 'נגר', emoji: '🔨'},
-    {word: 'חגיגה', translation: 'חגיגה', emoji: '🎉'},
-    {word: 'אגוז', translation: 'אגוז', emoji: '🥜'},
-    {word: 'תגובה', translation: 'תגובה', emoji: '💬'},
-    {word: 'מגש', translation: 'מגש', emoji: '🍽️'},
-    {word: 'רגל', translation: 'רגל', emoji: '🦵'},
-    {word: 'מגדל', translation: 'מגדל', emoji: '🗼'},
-    {word: 'סגול', translation: 'סגול', emoji: '🟣'}
-    ],
-    end: [
-    {word: 'דג', translation: 'דג', emoji: '🐟'},
-    {word: 'חג', translation: 'חג', emoji: '🎊'},
-    {word: 'שלג', translation: 'שלג', emoji: '❄️'},
-    {word: 'דלג', translation: 'דלג', emoji: '🦘'},
-    {word: 'נג', translation: 'נג', emoji: '🎵'},
-    {word: 'רג', translation: 'רג', emoji: '🌊'},
-    {word: 'תג', translation: 'תג', emoji: '🏷️'},
-    {word: 'בג', translation: 'בג', emoji: '👔'},
-    {word: 'זג', translation: 'זג', emoji: '🔄'},
-    {word: 'פג', translation: 'פג', emoji: '⏰'}
-    ]
-    },
-    'ד': {
-    start: [
-    {word: 'דב', translation: 'דב', emoji: '🐻'},
-    {word: 'דג', translation: 'דג', emoji: '🐟'},
-    {word: 'דלת', translation: 'דלת', emoji: '🚪'},
-    {word: 'דבש', translation: 'דבש', emoji: '🍯'},
-    {word: 'דקל', translation: 'דקל', emoji: '🌴'},
-    {word: 'דם', translation: 'דם', emoji: '🩸'},
-    {word: 'דרך', translation: 'דרך', emoji: '🛣️'},
-    {word: 'דקה', translation: 'דקה', emoji: '⏰'},
-    {word: 'דולר', translation: 'דולר', emoji: '💵'},
-    {word: 'דואר', translation: 'דואר', emoji: '📮'}
-    ],
-    middle: [
-    {word: 'ידיים', translation: 'ידיים', emoji: '🙌'},
-    {word: 'בדיקה', translation: 'בדיקה', emoji: '🔍'},
-    {word: 'מדע', translation: 'מדע', emoji: '🔬'},
-    {word: 'סדר', translation: 'סדר', emoji: '📋'},
-    {word: 'נדר', translation: 'נדר', emoji: '🤞'},
-    {word: 'חדש', translation: 'חדש', emoji: '🆕'},
-    {word: 'קדוש', translation: 'קדוש', emoji: '✨'},
-    {word: 'רדיו', translation: 'רדיו', emoji: '📻'},
-    {word: 'גדול', translation: 'גדול', emoji: '📏'},
-    {word: 'אדיב', translation: 'אדיב', emoji: '😊'}
-    ],
-    end: [
-    {word: 'יד', translation: 'יד', emoji: '✋'},
-    {word: 'לד', translation: 'לד', emoji: '👶'},
-    {word: 'סוד', translation: 'סוד', emoji: '🤫'},
-    {word: 'מוד', translation: 'מוד', emoji: '📊'},
-    {word: 'קוד', translation: 'קוד', emoji: '💻'},
-    {word: 'בד', translation: 'בד', emoji: '🧵'},
-    {word: 'גד', translation: 'גד', emoji: '🐟'},
-    {word: 'הד', translation: 'הד', emoji: '📢'},
-    {word: 'וד', translation: 'וד', emoji: '🎣'},
-    {word: 'זד', translation: 'זד', emoji: '⚡'}
-    ]
-    },
-    'ה': {
-    start: [
-    {word: 'הר', translation: 'הר', emoji: '🏔️'},
-    {word: 'היד', translation: 'היד', emoji: '✋'},
-    {word: 'הבית', translation: 'הבית', emoji: '🏠'},
-    {word: 'האף', translation: 'האף', emoji: '👃'},
-    {word: 'הלב', translation: 'הלב', emoji: '❤️'},
-    {word: 'הגן', translation: 'הגן', emoji: '🌳'},
-    {word: 'הכלב', translation: 'הכלב', emoji: '🐕'},
-    {word: 'החתול', translation: 'החתול', emoji: '🐱'},
-    {word: 'הירח', translation: 'הירח', emoji: '🌙'},
-    {word: 'השמש', translation: 'השמש', emoji: '☀️'}
-    ],
-    middle: [
-    {word: 'בהיר', translation: 'בהיר', emoji: '🌟'},
-    {word: 'מהר', translation: 'מהר', emoji: '💨'},
-    {word: 'אוהב', translation: 'אוהב', emoji: '💕'},
-    {word: 'זוהר', translation: 'זוהר', emoji: '✨'},
-    {word: 'מהלך', translation: 'מהלך', emoji: '🚶'},
-    {word: 'תהליך', translation: 'תהליך', emoji: '⚙️'},
-    {word: 'שהות', translation: 'שהות', emoji: '⏳'},
-    {word: 'נהר', translation: 'נהר', emoji: '🏞️'},
-    {word: 'צהוב', translation: 'צהוב', emoji: '🟡'},
-    {word: 'קהל', translation: 'קהל', emoji: '👥'}
-    ],
-    end: [
-    {word: 'מה', translation: 'מה', emoji: '❓'},
-    {word: 'פה', translation: 'פה', emoji: '👄'},
-    {word: 'איה', translation: 'איה', emoji: '❓'},
-    {word: 'גה', translation: 'גה', emoji: '🎵'},
-    {word: 'בה', translation: 'בה', emoji: '👆'},
-    {word: 'לה', translation: 'לה', emoji: '👩'},
-    {word: 'זה', translation: 'זה', emoji: '👆'},
-    {word: 'שה', translation: 'שה', emoji: '🐑'},
-    {word: 'חה', translation: 'חה', emoji: '😄'},
-    {word: 'טה', translation: 'טה', emoji: '🎯'}
-    ]
-    },
-    'ו': {
-    start: [
-    {word: 'ורד', translation: 'ורד', emoji: '🌹'},
-    {word: 'ודאי', translation: 'ודאי', emoji: '✅'},
-    {word: 'וילון', translation: 'וילון', emoji: '🪟'},
-    {word: 'וופל', translation: 'וופל', emoji: '🧇'},
-    {word: 'ויטמין', translation: 'ויטמין', emoji: '💊'},
-    {word: 'וידאו', translation: 'וידאו', emoji: '📹'},
-    {word: 'ויזה', translation: 'ויזה', emoji: '📋'},
-    {word: 'וירוס', translation: 'וירוס', emoji: '🦠'},
-    {word: 'ווקה', translation: 'ווקה', emoji: '🍸'},
-    {word: 'ולווט', translation: 'ולווט', emoji: '⚡'}
-    ],
-    middle: [
-    {word: 'אוויר', translation: 'אוויר', emoji: '💨'},
-    {word: 'מועד', translation: 'מועד', emoji: '📅'},
-    {word: 'דווקא', translation: 'דווקא', emoji: '💯'},
-    {word: 'בוקר', translation: 'בוקר', emoji: '🌅'},
-    {word: 'צוואר', translation: 'צוואר', emoji: '🦒'},
-    {word: 'מוות', translation: 'מוות', emoji: '💀'},
-    {word: 'ראווה', translation: 'ראווה', emoji: '👀'},
-    {word: 'תווית', translation: 'תווית', emoji: '🏷️'},
-    {word: 'עוגה', translation: 'עוגה', emoji: '🎂'},
-    {word: 'מוזר', translation: 'מוזר', emoji: '🤔'}
-    ],
-    end: [
-    {word: 'פרו', translation: 'פרו', emoji: '🥩'},
-    {word: 'שלו', translation: 'שלו', emoji: '👨'},
-    {word: 'עליו', translation: 'עליו', emoji: '⬆️'},
-    {word: 'אליו', translation: 'אליו', emoji: '➡️'},
-    {word: 'בו', translation: 'בו', emoji: '👆'},
-    {word: 'לו', translation: 'לו', emoji: '👨'},
-    {word: 'פו', translation: 'פו', emoji: '💨'},
-    {word: 'בקרו', translation: 'בקרו', emoji: '🐄'},
-    {word: 'חלקו', translation: 'חלקו', emoji: '🍰'},
-    {word: 'דרכו', translation: 'דרכו', emoji: '🛣️'}
-    ]
-    },
-    'ז': {
-    start: [
-    {word: 'זבוב', translation: 'זבוב', emoji: '🪰'},
-    {word: 'זקן', translation: 'זקן', emoji: '🧔'},
-    {word: 'זרוע', translation: 'זרוע', emoji: '💪'},
-    {word: 'זהב', translation: 'זהב', emoji:
-</body>
 
+</body>
 </html>
