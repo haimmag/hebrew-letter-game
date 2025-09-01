@@ -1742,6 +1742,19 @@
             async playWord() {
                 if (!this.currentWord) return;
 
+                // Check if this is a mobile device
+                const isMobile = /Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+                
+                if (isMobile) {
+                    // Use Google TTS for mobile devices
+                    this.playWithGoogleTTS();
+                } else {
+                    // Use local TTS for PC browsers (original code)
+                    this.playWithLocalTTS();
+                }
+            }
+
+            async playWithLocalTTS() {
                 try {
                     // Check if speech synthesis is available
                     if ('speechSynthesis' in window) {
@@ -1753,12 +1766,12 @@
 
                         const utterance = new SpeechSynthesisUtterance(this.currentWord.word);
                         
-                        // Mobile-friendly settings
-                        utterance.rate = 0.7; // Slower for mobile
-                        utterance.pitch = 1.0; // Standard pitch
-                        utterance.volume = 1.0; // Full volume
+                        // PC settings
+                        utterance.rate = 0.7;
+                        utterance.pitch = 1.0;
+                        utterance.volume = 1.0;
 
-                        // Try to find the best voice for mobile
+                        // Try to find the best voice for Hebrew
                         const availableVoices = speechSynthesis.getVoices();
                         console.log('Available voices:', availableVoices.map(v => `${v.name} (${v.lang})`));
                         
@@ -1791,101 +1804,47 @@
                             utterance.lang = selectedVoice.lang;
                             console.log('Using voice:', selectedVoice.name, selectedVoice.lang);
                         } else {
-                            // Fallback language settings for mobile
                             utterance.lang = 'he-IL';
                         }
 
-                        // Enhanced error handling
                         utterance.onerror = (event) => {
                             console.error('Speech synthesis error:', event.error);
-                            
-                            // Try with English if Hebrew fails on mobile
-                            if (event.error === 'language-not-supported' || event.error === 'voice-unavailable') {
-                                this.playWordWithFallback();
-                            } else {
-                                this.showFeedback('🔊 קול לא זמין במכשיר זה', 'info');
-                            }
                         };
 
                         utterance.onend = () => {
                             console.log('Speech synthesis completed successfully');
                         };
 
-                        utterance.onstart = () => {
-                            console.log('Speech synthesis started');
-                        };
-
-                        // For mobile browsers, ensure user interaction
-                        if (navigator.userAgent.includes('Mobile')) {
-                            // Short delay for mobile browsers
-                            setTimeout(() => {
-                                speechSynthesis.speak(utterance);
-                            }, 100);
-                        } else {
-                            speechSynthesis.speak(utterance);
-                        }
+                        speechSynthesis.speak(utterance);
                         
-                    } else {
-                        this.showFeedback('השמעת קול לא זמינה במכשיר זה', 'info');
                     }
                 } catch (error) {
                     console.error('Speech synthesis error:', error);
-                    this.playWordWithFallback();
                 }
             }
 
-            playWordWithFallback() {
-                // Try Google Translate TTS as fallback for Hebrew
-                this.tryGoogleTTSFallback();
-            }
-
-            async tryGoogleTTSFallback() {
+            async playWithGoogleTTS() {
                 try {
-                    // Use Google Translate TTS API as fallback
+                    // Use Google Translate TTS API for mobile
                     const word = encodeURIComponent(this.currentWord.word);
                     const audioUrl = `https://translate.google.com/translate_tts?ie=UTF-8&tl=he&client=tw-ob&q=${word}`;
                     
                     const audio = new Audio(audioUrl);
                     audio.crossOrigin = 'anonymous';
                     
-                    audio.onload = () => {
-                        this.showFeedback('🌐 משתמש בקול גוגל לעברית', 'info');
-                    };
-                    
                     audio.onerror = () => {
-                        console.log('Google TTS fallback failed, using English TTS');
-                        this.useEnglishTTSFallback();
+                        console.log('Google TTS failed, trying local TTS as fallback');
+                        this.showFeedback('🌐 Google TTS לא זמין, מנסה קול מקומי', 'info');
+                        this.playWithLocalTTS();
                     };
                     
                     await audio.play();
                     
                 } catch (error) {
-                    console.error('Google TTS fallback failed:', error);
-                    this.useEnglishTTSFallback();
-                }
-            }
-
-            useEnglishTTSFallback() {
-                // Final fallback - use English TTS with Hebrew text
-                try {
-                    const utterance = new SpeechSynthesisUtterance(this.currentWord.word);
-                    utterance.lang = 'en-US'; // Use English voice
-                    utterance.rate = 0.4; // Very slow to help with Hebrew pronunciation
-                    utterance.pitch = 1.0;
-                    
-                    utterance.onerror = (event) => {
-                        console.error('English TTS fallback error:', event.error);
-                        this.showFeedback('🔊 השמעת קול לא זמינה - השתמש בהקלטה שלך', 'info');
-                    };
-                    
-                    utterance.onstart = () => {
-                        this.showFeedback('🔊 משתמש בקול אנגלי (ייתכן שהמבטא לא מדויק)', 'warning');
-                    };
-                    
-                    speechSynthesis.speak(utterance);
-                } catch (error) {
-                    console.error('All TTS methods failed:', error);
-                    this.showFeedback('🔊 השמעת קול לא זמינה - השתמש בהקלטה שלך', 'info');
+                    console.error('Google TTS error:', error);
+                    this.showFeedback('🌐 שגיאה ב-Google TTS, מנסה קול מקומי', 'info');
+                    // Fallback to local TTS
+                    this.playWithLocalTTS();
                 }
             }
 
