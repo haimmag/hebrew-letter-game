@@ -673,6 +673,20 @@
         </div>
     </div>
 
+    <!-- Voice Selection Dropdown -->
+    <div class="voice-selection"
+        style="margin: 15px 0; padding: 15px;">
+        <label for="voiceSelect" style="display: block; margin-bottom: 8px; font-weight: bold;">🎤
+            בחר קול להשמעה:</label>
+        <select id="voiceSelect"
+            style="padding: 10px; border: 1px solid #ccc; border-radius: 5px; font-size: 14px; background: white;">
+            <option value="">טוען קולות...</option>
+        </select>
+        <div id="selectedVoiceInfo" style="margin-top: 8px; font-size: 12px; color: #666; font-style: italic;">
+            <!-- Will show selected voice info -->
+        </div>
+    </div>
+
     <!-- Voice Display -->
     <div id="voicesDisplay" class="voices-display">
         <div class="voices-list" id="voicesList">
@@ -695,11 +709,13 @@
                 this.recognizedText = '';
                 this.speechRecognition = null;
                 this.recordingTimeout = null;
+                this.selectedVoice = null; // Track the selected voice
 
                 this.initializeWords();
                 this.initializeUI();
                 this.setupEventListeners();
                 this.initializeSpeechRecognition();
+                this.initializeVoiceSelection(); // Initialize voice dropdown
             }
 
             initializeWords() {
@@ -1577,7 +1593,7 @@
                 }
 
                 const allWords = [];
-                
+
                 // Collect all words with their emojis
                 Object.keys(this.words).forEach(letter => {
                     ['start', 'middle', 'end'].forEach(position => {
@@ -1617,7 +1633,7 @@
 
                 // Get available voices
                 const voices = speechSynthesis.getVoices();
-                
+
                 if (voices.length === 0) {
                     // If no voices loaded yet, try again after a short delay
                     setTimeout(() => this.populateVoicesDisplay(), 100);
@@ -1628,10 +1644,10 @@
                 console.log('Total voices available:', voices.length);
 
                 // Separate Hebrew and other voices
-                const hebrewVoices = voices.filter(voice => 
+                const hebrewVoices = voices.filter(voice =>
                     voice.lang.startsWith('he') || voice.lang.includes('IL')
                 );
-                const otherVoices = voices.filter(voice => 
+                const otherVoices = voices.filter(voice =>
                     !voice.lang.startsWith('he') && !voice.lang.includes('IL')
                 );
 
@@ -1645,21 +1661,108 @@
                 prioritizedVoices.forEach((voice) => {
                     const voiceItem = document.createElement('div');
                     voiceItem.className = 'voice-item';
-                    
+
                     // Add hebrew class for Hebrew voices
                     if (voice.lang.startsWith('he') || voice.lang.includes('IL')) {
                         voiceItem.classList.add('hebrew');
                     }
-                    
-                    // Shorter display format
-                    let voiceText = voice.lang;
+
+                    // Display voice name and language
+                    let voiceText = `${voice.name} (${voice.lang})`;
                     if (voice.default) voiceText += ' ⭐';
-                    
+
                     voiceItem.textContent = voiceText;
                     voicesList.appendChild(voiceItem);
                 });
 
                 console.log('Voices display populated with', prioritizedVoices.length, 'voices');
+            }
+
+            initializeVoiceSelection() {
+                const voiceSelect = document.getElementById('voiceSelect');
+                const selectedVoiceInfo = document.getElementById('selectedVoiceInfo');
+
+                if (!voiceSelect) return;
+
+                // Function to populate voices dropdown
+                const populateVoiceDropdown = () => {
+                    const voices = speechSynthesis.getVoices();
+
+                    if (voices.length === 0) {
+                        setTimeout(populateVoiceDropdown, 100);
+                        return;
+                    }
+
+                    // Clear existing options
+                    voiceSelect.innerHTML = '';
+
+                    // Separate Hebrew and other voices
+                    const hebrewVoices = voices.filter(voice =>
+                        voice.lang.startsWith('he') || voice.lang.includes('IL')
+                    );
+                    const otherVoices = voices.filter(voice =>
+                        !voice.lang.startsWith('he') && !voice.lang.includes('IL')
+                    );
+
+                    // Add Hebrew voices first
+                    if (hebrewVoices.length > 0) {
+                        const hebrewGroup = document.createElement('optgroup');
+                        hebrewGroup.label = 'עברית (Hebrew)';
+                        hebrewVoices.forEach(voice => {
+                            const option = document.createElement('option');
+                            option.value = voice.name;
+                            option.textContent = `${voice.name} (${voice.lang})${voice.default ? ' ⭐' : ''}`;
+                            hebrewGroup.appendChild(option);
+                        });
+                        voiceSelect.appendChild(hebrewGroup);
+                    }
+
+                    // Add other voices
+                    if (otherVoices.length > 0) {
+                        const otherGroup = document.createElement('optgroup');
+                        otherGroup.label = 'Other Languages';
+                        otherVoices.forEach(voice => {
+                            const option = document.createElement('option');
+                            option.value = voice.name;
+                            option.textContent = `${voice.name} (${voice.lang})${voice.default ? ' ⭐' : ''}`;
+                            otherGroup.appendChild(option);
+                        });
+                        voiceSelect.appendChild(otherGroup);
+                    }
+
+                    // Set default selection (prefer Hebrew voice, especially Carmit)
+                    const carmitVoice = voices.find(voice => voice.name.toLowerCase().includes('carmit'));
+                    const defaultHebrewVoice = hebrewVoices.find(voice => voice.default) || hebrewVoices[0];
+                    const defaultVoice = carmitVoice || defaultHebrewVoice || voices.find(voice => voice.default) || voices[0];
+
+                    if (defaultVoice) {
+                        voiceSelect.value = defaultVoice.name;
+                        this.selectedVoice = defaultVoice;
+                        this.updateSelectedVoiceInfo();
+                    }
+                };
+
+                // Voice selection change handler
+                voiceSelect.addEventListener('change', (e) => {
+                    const voices = speechSynthesis.getVoices();
+                    this.selectedVoice = voices.find(voice => voice.name === e.target.value);
+                    this.updateSelectedVoiceInfo();
+                });
+
+                // Load voices
+                populateVoiceDropdown();
+
+                // Chrome loads voices asynchronously
+                window.speechSynthesis.onvoiceschanged = () => {
+                    populateVoiceDropdown();
+                };
+            }
+
+            updateSelectedVoiceInfo() {
+                const selectedVoiceInfo = document.getElementById('selectedVoiceInfo');
+                if (!selectedVoiceInfo || !this.selectedVoice) return;
+
+                selectedVoiceInfo.textContent = `נבחר: ${this.selectedVoice.name} (${this.selectedVoice.lang})${this.selectedVoice.default ? ' - קול ברירת מחדל' : ''}`;
             }
 
             initializeUI() {
@@ -1669,7 +1772,7 @@
                     'כ', 'ל', 'מ', 'נ', 'ס', 'ע', 'פ', 'צ', 'ק', 'ר',
                     'ש', 'ת'
                 ];
-                
+
                 // Filter to only include letters that have words defined
                 const availableLetters = hebrewAlphabet.filter(letter => this.words[letter]);
                 const lettersGrid = document.getElementById('lettersGrid');
@@ -1684,7 +1787,7 @@
 
                 this.updateScore();
                 this.updateSimilarityScore();
-                
+
                 // Populate displays after DOM elements are ready
                 this.populateWordsDisplay();
                 this.populateVoicesDisplay();
@@ -1743,15 +1846,17 @@
                 if (!this.currentWord) return;
 
                 // Check if this is a mobile device
-                const isMobile = /Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-                
-                if (isMobile) {
-                    // Use Google TTS for mobile devices
-                    this.playWithGoogleTTS();
-                } else {
-                    // Use local TTS for PC browsers (original code)
-                    this.playWithLocalTTS();
-                }
+                // const isMobile = /Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+
+                // if (isMobile) {
+                //     // Use Google TTS for mobile devices
+                //     this.playWithGoogleTTS();
+                // } else {
+                //     // Use local TTS for PC browsers (original code)
+                //     this.playWithLocalTTS();
+                // }
+
+                this.playWithLocalTTS();
             }
 
             async playWithLocalTTS() {
@@ -1760,45 +1865,50 @@
                     if ('speechSynthesis' in window) {
                         // Cancel any ongoing speech
                         speechSynthesis.cancel();
-                        
+
                         // Wait for voices to be loaded with Promise-based approach
                         const voices = await this.waitForVoices();
 
                         const utterance = new SpeechSynthesisUtterance(this.currentWord.word);
-                        
+
                         // PC settings
                         utterance.rate = 0.7;
                         utterance.pitch = 1.0;
                         utterance.volume = 1.0;
 
-                        // Try to find the best voice for Hebrew
-                        const availableVoices = speechSynthesis.getVoices();
-                        console.log('Available voices:', availableVoices.map(v => `${v.name} (${v.lang})`));
-                        
-                        // First try Hebrew voices
-                        let selectedVoice = availableVoices.find(voice => 
-                            voice.lang.startsWith('he') || voice.lang.includes('IL')
-                        );
-                        
-                        // If no Hebrew, try Arabic (similar sounds)
+                        // Use the selected voice from dropdown if available
+                        let selectedVoice = this.selectedVoice;
+
+                        // If no voice selected from dropdown, fall back to automatic selection
                         if (!selectedVoice) {
-                            selectedVoice = availableVoices.find(voice => 
-                                voice.lang.startsWith('ar')
+                            const availableVoices = speechSynthesis.getVoices();
+                            console.log('No voice selected, finding best voice from:', availableVoices.map(v => `${v.name} (${v.lang})`));
+
+                            // First try Hebrew voices
+                            selectedVoice = availableVoices.find(voice =>
+                                voice.lang.startsWith('he') || voice.lang.includes('IL')
                             );
+
+                            // If no Hebrew, try Arabic (similar sounds)
+                            if (!selectedVoice) {
+                                selectedVoice = availableVoices.find(voice =>
+                                    voice.lang.startsWith('ar')
+                                );
+                            }
+
+                            // If no Hebrew/Arabic, try any voice that's not English as fallback
+                            if (!selectedVoice) {
+                                selectedVoice = availableVoices.find(voice =>
+                                    !voice.lang.startsWith('en')
+                                );
+                            }
+
+                            // Last resort: use default voice
+                            if (!selectedVoice && availableVoices.length > 0) {
+                                selectedVoice = availableVoices[0];
+                            }
                         }
-                        
-                        // If no Hebrew/Arabic, try any voice that's not English as fallback
-                        if (!selectedVoice) {
-                            selectedVoice = availableVoices.find(voice => 
-                                !voice.lang.startsWith('en')
-                            );
-                        }
-                        
-                        // Last resort: use default voice
-                        if (!selectedVoice && availableVoices.length > 0) {
-                            selectedVoice = availableVoices[0];
-                        }
-                        
+
                         if (selectedVoice) {
                             utterance.voice = selectedVoice;
                             utterance.lang = selectedVoice.lang;
@@ -1816,7 +1926,7 @@
                         };
 
                         speechSynthesis.speak(utterance);
-                        
+
                     }
                 } catch (error) {
                     console.error('Speech synthesis error:', error);
@@ -1828,18 +1938,18 @@
                     // Use Google Translate TTS API for mobile
                     const word = encodeURIComponent(this.currentWord.word);
                     const audioUrl = `https://translate.google.com/translate_tts?ie=UTF-8&tl=he&client=tw-ob&q=${word}`;
-                    
+
                     const audio = new Audio(audioUrl);
                     audio.crossOrigin = 'anonymous';
-                    
+
                     audio.onerror = () => {
                         console.log('Google TTS failed, trying local TTS as fallback');
                         this.showFeedback('🌐 Google TTS לא זמין, מנסה קול מקומי', 'info');
                         this.playWithLocalTTS();
                     };
-                    
+
                     await audio.play();
-                    
+
                 } catch (error) {
                     console.error('Google TTS error:', error);
                     this.showFeedback('🌐 שגיאה ב-Google TTS, מנסה קול מקומי', 'info');
@@ -1888,7 +1998,7 @@
                         'audio/mp4',
                         'audio/wav'
                     ];
-                    
+
                     for (const type of supportedTypes) {
                         if (MediaRecorder.isTypeSupported(type)) {
                             mimeType = type;
@@ -1912,13 +2022,13 @@
                             });
                             const audioUrl = window.nativeCreateObjectURL(audioBlob);
                             this.recordedAudio = new Audio(audioUrl);
-                            
+
                             // Add error handling for audio loading
                             this.recordedAudio.onerror = (e) => {
                                 console.error('Audio loading error:', e);
                                 this.showFeedback('שגיאה בטעינת ההקלטה', 'info');
                             };
-                            
+
                             this.recordedAudio.onloadeddata = () => {
                                 document.getElementById('playRecordingBtn').disabled = false;
                                 document.getElementById('analyzeSimilarityBtn').disabled = false;
@@ -2022,7 +2132,7 @@
                 if (this.recordedAudio) {
                     try {
                         const playPromise = this.recordedAudio.play();
-                        
+
                         if (playPromise !== undefined) {
                             playPromise.then(() => {
                                 this.score += 10;
@@ -2055,7 +2165,7 @@
                 if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
                     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
                     this.speechRecognition = new SpeechRecognition();
-                    
+
                     // Configure speech recognition for Hebrew (with fallback to English)
                     this.speechRecognition.lang = 'he-IL';
                     this.speechRecognition.interimResults = true; // Get interim results
@@ -2064,11 +2174,11 @@
 
                     this.speechRecognition.onresult = (event) => {
                         console.log('Speech recognition result event:', event);
-                        
+
                         // Get the latest result
                         const lastResultIndex = event.results.length - 1;
                         const result = event.results[lastResultIndex];
-                        
+
                         if (result.isFinal) {
                             // Final result - use this for calculation
                             let bestTranscript = '';
@@ -2080,14 +2190,14 @@
                                     break;
                                 }
                             }
-                            
+
                             this.recognizedText = bestTranscript;
                             console.log('Final recognized text:', this.recognizedText);
                             console.log('Target word:', this.currentWord.word);
-                            
+
                             // Stop listening after getting final result
                             this.speechRecognition.stop();
-                            
+
                             if (this.recognizedText) {
                                 this.calculateSimilarity();
                             } else {
@@ -2105,7 +2215,7 @@
 
                     this.speechRecognition.onerror = (event) => {
                         console.error('Speech recognition error:', event.error);
-                        
+
                         // Provide specific error messages
                         if (event.error === 'no-speech') {
                             // Try to restart recognition automatically once
@@ -2160,7 +2270,7 @@
 
                     this.speechRecognition.onend = () => {
                         console.log('Speech recognition ended');
-                        
+
                         // If no text was recognized, show message
                         if (!this.recognizedText) {
                             this.showFeedback('לא זוהה דיבור. ודא שהמיקרופון פועל ונסה שוב', 'info');
@@ -2227,19 +2337,19 @@
                 const targetWord = this.currentWord.word;
                 const spokenWord = this.recognizedText;
 
-                console.log('Calculating similarity between:', {target: targetWord, spoken: spokenWord});
+                console.log('Calculating similarity between:', { target: targetWord, spoken: spokenWord });
 
                 // Calculate Levenshtein distance for similarity
                 const similarity = this.calculateLevenshteinSimilarity(targetWord, spokenWord);
                 this.similarityScore = Math.round(similarity * 100);
-                
+
                 console.log('Similarity score calculated:', this.similarityScore);
                 this.updateSimilarityScore();
 
                 // Provide feedback based on similarity score
                 let feedback = '';
                 let feedbackType = '';
-                
+
                 if (this.similarityScore >= 90) {
                     feedback = `מושלם! דמיון של ${this.similarityScore}% 🎉`;
                     feedbackType = 'success';
@@ -2260,7 +2370,7 @@
 
                 this.updateScore();
                 this.showFeedback(feedback, feedbackType);
-                
+
                 console.log(`Target: "${targetWord}", Spoken: "${spokenWord}", Similarity: ${this.similarityScore}%`);
             }
 
@@ -2299,9 +2409,9 @@
 
             offerManualInput() {
                 if (!this.currentWord) return;
-                
+
                 const userInput = prompt(`זיהוי הדיבור לא עבד. אנא הקלד את המילה "${this.currentWord.word}" כפי שאתה מבטא אותה:`);
-                
+
                 if (userInput && userInput.trim()) {
                     this.recognizedText = userInput.trim();
                     console.log('Manual input received:', this.recognizedText);
@@ -2327,24 +2437,24 @@
             waitForVoices() {
                 return new Promise((resolve) => {
                     let voices = speechSynthesis.getVoices();
-                    
+
                     // If voices are already loaded, resolve immediately
                     if (voices.length > 0) {
                         console.log('Voices already loaded:', voices.length);
                         resolve(voices);
                         return;
                     }
-                    
+
                     // If no voices, wait for them to load
                     console.log('Waiting for voices to load...');
-                    
+
                     let attempts = 0;
                     const maxAttempts = 10;
-                    
+
                     const checkVoices = () => {
                         voices = speechSynthesis.getVoices();
                         attempts++;
-                        
+
                         if (voices.length > 0) {
                             console.log(`Voices loaded after ${attempts} attempts:`, voices.length);
                             resolve(voices);
@@ -2356,7 +2466,7 @@
                             setTimeout(checkVoices, 200);
                         }
                     };
-                    
+
                     // Listen for voice changes
                     const onVoicesChanged = () => {
                         voices = speechSynthesis.getVoices();
@@ -2366,12 +2476,12 @@
                             resolve(voices);
                         }
                     };
-                    
+
                     speechSynthesis.addEventListener('voiceschanged', onVoicesChanged);
-                    
+
                     // Start checking
                     checkVoices();
-                    
+
                     // Fallback timeout
                     setTimeout(() => {
                         speechSynthesis.removeEventListener('voiceschanged', onVoicesChanged);
@@ -2392,4 +2502,5 @@
     </script>
 
 </body>
+
 </html>
