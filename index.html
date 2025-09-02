@@ -1,279 +1,6 @@
 <html lang="he" dir="rtl">
 
 <head>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/html-to-image/1.11.13/html-to-image.min.js"
-        integrity="sha512-iZ2ORl595Wx6miw+GuadDet4WQbdSWS3JLMoNfY8cRGoEFy6oT3G9IbcrBeL6AfkgpA51ETt/faX6yLV+/gFJg=="
-        crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-    <script>
-        (function () {
-            const originalConsole = window.console;
-            window.console = {
-                log: (...args) => {
-                    originalConsole.log(...args);
-                    window.parent.postMessage({ type: 'console', message: args.join(' ') }, '*');
-                },
-                error: (...args) => {
-                    originalConsole.error(...args);
-                    window.parent.postMessage({ type: 'console', message: 'Error: ' + args.join(' ') }, '*');
-                },
-                warn: (...args) => {
-                    originalConsole.warn(...args);
-                    window.parent.postMessage({ type: 'console', message: 'Warning: ' + args.join(' ') }, '*');
-                }
-            };
-
-            let requestId = 0;
-            let callbacksMap = new Map();
-            let streamControllers = new Map();
-
-            window.claude = {
-                complete: (prompt) => {
-                    return new Promise((resolve, reject) => {
-                        const id = requestId++;
-                        callbacksMap.set(id, { resolve, reject });
-                        window.parent.postMessage({ type: 'claudeComplete', id, prompt }, '*');
-                    });
-                }
-            };
-
-            window.storage = {
-                get: (key, shared = false) => {
-                    return new Promise((resolve, reject) => {
-                        const id = requestId++;
-                        callbacksMap.set(id, { resolve, reject });
-                        window.parent.postMessage({ type: 'storageGet', id, key, shared }, '*');
-                    });
-                },
-                set: (key, value, shared = false) => {
-                    return new Promise((resolve, reject) => {
-                        const id = requestId++;
-                        callbacksMap.set(id, { resolve, reject });
-                        window.parent.postMessage({ type: 'storageSet', id, key, value, shared }, '*');
-                    });
-                },
-                delete: (key, shared = false) => {
-                    return new Promise((resolve, reject) => {
-                        const id = requestId++;
-                        callbacksMap.set(id, { resolve, reject });
-                        window.parent.postMessage({ type: 'storageDelete', id, key, shared }, '*');
-                    });
-                },
-                list: (prefix, shared = false) => {
-                    return new Promise((resolve, reject) => {
-                        const id = requestId++;
-                        callbacksMap.set(id, { resolve, reject });
-                        window.parent.postMessage({ type: 'storageList', id, prefix, shared }, '*');
-                    });
-                }
-            };
-
-            // Store the native URL methods globally
-            window.nativeCreateObjectURL = URL.createObjectURL;
-            window.nativeRevokeObjectURL = URL.revokeObjectURL;
-
-            // Override global fetch with streaming support
-            window.fetch = (url, init = {}) => {
-                return new Promise((resolve, reject) => {
-                    const id = requestId++;
-                    const channelId = `fetch-${id}-${Date.now()}`;
-
-                    callbacksMap.set(id, {
-                        resolve: (response) => {
-                            // Create a ReadableStream for the response body
-                            const stream = new ReadableStream({
-                                start(controller) {
-                                    streamControllers.set(channelId, controller);
-                                },
-                                cancel() {
-                                    streamControllers.delete(channelId);
-                                }
-                            });
-
-                            // Create and return the Response with the stream
-                            resolve(new Response(stream, {
-                                status: response.status,
-                                statusText: response.statusText,
-                                headers: response.headers
-                            }));
-                        },
-                        reject,
-                        channelId
-                    });
-
-                    window.parent.postMessage({
-                        type: 'proxyFetch',
-                        id,
-                        url,
-                        init,
-                        channelId
-                    }, '*');
-                });
-            };
-
-            window.addEventListener('message', async (event) => {
-                if (event.data.type === 'takeScreenshot') {
-                    const rootElement = document.getElementById('artifacts-component-root-html');
-                    if (!rootElement) {
-                        window.parent.postMessage({
-                            type: 'screenshotError',
-                            error: new Error('Root element not found'),
-                        }, '*');
-                    }
-                    const screenshot = await htmlToImage.toPng(rootElement, {
-                        imagePlaceholder:
-                            "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAAXNSR0IArs4c6QAAAA1JREFUGFdjePDgwX8ACOQDoNsk0PMAAAAASUVORK5CYII=",
-                    });
-                    window.parent.postMessage({
-                        type: 'screenshotData',
-                        data: screenshot,
-                    }, '*');
-                } else if (event.data.type === 'claudeComplete') {
-                    const callback = callbacksMap.get(event.data.id);
-                    if (event.data.error) {
-                        callback.reject(new Error(event.data.error));
-                    } else {
-                        callback.resolve(event.data.completion);
-                    }
-                    callbacksMap.delete(event.data.id);
-                } else if (event.data.type === 'proxyFetchResponse') {
-                    const callback = callbacksMap.get(event.data.id);
-                    if (event.data.error) {
-                        callback.reject(new Error(event.data.error));
-                        callbacksMap.delete(event.data.id);
-                    } else {
-                        // Initial response with headers, status, etc.
-                        callback.resolve({
-                            status: event.data.status,
-                            statusText: event.data.statusText,
-                            headers: event.data.headers
-                        });
-                        // Don't delete the callback yet if streaming
-                        if (!event.data.body) {
-                            callbacksMap.delete(event.data.id);
-                        }
-                    }
-                } else if (event.data.type === 'proxyFetchStream') {
-                    // Handle streaming data chunks
-                    const controller = streamControllers.get(event.data.channelId);
-                    if (controller) {
-                        if (event.data.error) {
-                            controller.error(new Error(event.data.error));
-                            streamControllers.delete(event.data.channelId);
-                        } else if (event.data.done) {
-                            controller.close();
-                            streamControllers.delete(event.data.channelId);
-                            // Clean up the callback
-                            const callback = Array.from(callbacksMap.entries()).find(
-                                ([_, value]) => value.channelId === event.data.channelId
-                            );
-                            if (callback) {
-                                callbacksMap.delete(callback[0]);
-                            }
-                        } else if (event.data.chunk) {
-                            controller.enqueue(new Uint8Array(event.data.chunk));
-                        }
-                    }
-                } else if (event.data.type === 'storageGet') {
-                    const callback = callbacksMap.get(event.data.id);
-                    if (event.data.error) {
-                        callback.reject(new Error(event.data.error));
-                    } else {
-                        callback.resolve(event.data.result);
-                    }
-                    callbacksMap.delete(event.data.id);
-                } else if (event.data.type === 'storageSet') {
-                    const callback = callbacksMap.get(event.data.id);
-                    if (event.data.error) {
-                        callback.reject(new Error(event.data.error));
-                    } else {
-                        callback.resolve(event.data.result);
-                    }
-                    callbacksMap.delete(event.data.id);
-                } else if (event.data.type === 'storageDelete') {
-                    const callback = callbacksMap.get(event.data.id);
-                    if (event.data.error) {
-                        callback.reject(new Error(event.data.error));
-                    } else {
-                        callback.resolve(event.data.result);
-                    }
-                    callbacksMap.delete(event.data.id);
-                } else if (event.data.type === 'storageList') {
-                    const callback = callbacksMap.get(event.data.id);
-                    if (event.data.error) {
-                        callback.reject(new Error(event.data.error));
-                    } else {
-                        callback.resolve(event.data.result);
-                    }
-                    callbacksMap.delete(event.data.id);
-                }
-            });
-
-            window.addEventListener('click', (event) => {
-                const isEl = event.target instanceof HTMLElement;
-                if (!isEl) return;
-
-                // find ancestor links
-                const linkEl = event.target.closest("a");
-                if (!linkEl || !linkEl.href) return;
-
-                event.preventDefault();
-                event.stopImmediatePropagation();
-
-                if (linkEl.href.startsWith("blob-request:")) {
-                    const blob = getBlobFromURL(linkEl.href);
-                    if (!blob) return;
-                    void blob.arrayBuffer().then((data) => {
-                        window.parent.postMessage({
-                            type: "downloadFile",
-                            filename: linkEl.download,
-                            data,
-                            mimeType: blob.type || "application/octet-stream",
-                        });
-                    });
-                } else if (linkEl.href.startsWith("data:")) {
-                    const [header, base64Data] = linkEl.href.split(",");
-                    const mimeMatch = header.match(/data:([^;]+)/);
-                    const mimeType = mimeMatch ? mimeMatch[1] : "application/octet-stream";
-                    const binaryString = atob(base64Data);
-                    const data = Uint8Array.from(binaryString, (c) =>
-                        c.charCodeAt(0),
-                    ).buffer;
-                    window.parent.postMessage({
-                        type: "downloadFile",
-                        filename: linkEl.download,
-                        data,
-                        mimeType,
-                    });
-                } else {
-                    let linkUrl;
-                    try {
-                        linkUrl = new URL(linkEl.href);
-                    } catch (error) {
-                        return;
-                    }
-
-                    if (linkUrl.hostname === window.location.hostname) return;
-
-                    window.parent.postMessage({
-                        type: 'openExternal',
-                        href: linkEl.href,
-                    }, '*');
-                }
-            });
-
-            const originalOpen = window.open;
-            window.open = function (url) {
-                window.parent.postMessage({
-                    type: "openExternal",
-                    href: url,
-                }, "*");
-            };
-
-            window.addEventListener('error', (event) => {
-                window.parent.postMessage({ type: 'console', message: 'Uncaught Error: ' + event.message }, '*');
-            });
-        })();
-    </script>
 
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -673,6 +400,21 @@
         </div>
     </div>
 
+    <!-- TTS Method Selection Dropdown -->
+    <div class="tts-method-selection" style="margin: 15px 0; padding: 15px; border-radius: 10px;">
+        <label for="ttsMethodSelect" style="display: block; margin-bottom: 8px; font-weight: bold;">🔊 בחר שיטת
+            השמעה:</label>
+        <select id="ttsMethodSelect"
+            style="padding: 10px; border: 1px solid #ccc; border-radius: 5px; font-size: 14px; background: white;">
+            <option value="playWithGoogleTTS">Google TTS (ישיר)</option>
+            <option value="playWithGoogleTTSProxy">Google TTS (דרך Proxy)</option>
+            <option value="playWithLocalTTS">TTS מקומי (דפדפן)</option>
+        </select>
+        <div id="selectedTTSInfo" style="margin-top: 8px; font-size: 12px; color: #666; font-style: italic;">
+            נבחר: Google TTS (ישיר) - זמין ברוב הדפדפנים
+        </div>
+    </div>
+
     <!-- Voice Selection Dropdown -->
     <div class="voice-selection" style="margin: 15px 0; padding: 15px;">
         <label for="voiceSelect" style="display: block; margin-bottom: 8px; font-weight: bold;">🎤
@@ -715,6 +457,7 @@
                 this.setupEventListeners();
                 this.initializeSpeechRecognition();
                 this.initializeVoiceSelection(); // Initialize voice dropdown
+                this.autoSelectTTSMethod(); // Auto-select TTS method based on Hebrew voice availability
             }
 
             initializeWords() {
@@ -1630,9 +1373,11 @@
                 // Clear existing content
                 voicesList.innerHTML = '<div class="voice-item">Loading voices...</div>';
 
+                let voices = speechSynthesis.getVoices();
+
                 try {
                     // Wait for voices to be loaded properly
-                    const voices = await this.waitForVoices();
+                    voices = await this.waitForVoices();
 
                     // Clear loading message
                     voicesList.innerHTML = '';
@@ -1817,6 +1562,82 @@
                 document.getElementById('playRecordingBtn').addEventListener('click', () => this.playRecording());
                 document.getElementById('analyzeSimilarityBtn').addEventListener('click', () => this.analyzeSimilarity());
                 document.getElementById('nextWordBtn').addEventListener('click', () => this.loadRandomWord());
+
+                // TTS Method selection
+                const ttsMethodSelect = document.getElementById('ttsMethodSelect');
+                if (ttsMethodSelect) {
+                    ttsMethodSelect.addEventListener('change', () => this.updateTTSMethodInfo());
+                }
+            }
+
+            updateTTSMethodInfo() {
+                const ttsMethodSelect = document.getElementById('ttsMethodSelect');
+                const selectedTTSInfo = document.getElementById('selectedTTSInfo');
+
+                if (!ttsMethodSelect || !selectedTTSInfo) return;
+
+                const selectedMethod = ttsMethodSelect.value;
+                let infoText = '';
+
+                switch (selectedMethod) {
+                    case 'playWithLocalTTS':
+                        infoText = 'נבחר: TTS מקומי (דפדפן) - משתמש בקולות המערכת';
+                        break;
+                    case 'playWithGoogleTTSProxy':
+                        infoText = 'נבחר: Google TTS (דרך Proxy) - עוקף חסימות CORS';
+                        break;
+                    case 'playWithGoogleTTS':
+                    default:
+                        infoText = 'נבחר: Google TTS (ישיר) - זמין ברוב הדפדפנים';
+                        break;
+                }
+
+                selectedTTSInfo.textContent = infoText;
+            }
+
+            async autoSelectTTSMethod() {
+                // Wait for voices to be loaded
+                const voices = await this.waitForVoices();
+
+                // Check if Hebrew voices are available
+                const hebrewVoices = voices.filter(voice =>
+                    voice.lang.toLowerCase().includes('he') ||
+                    voice.lang.toLowerCase().includes('iw') ||
+                    voice.name.toLowerCase().includes('hebrew') ||
+                    voice.name.toLowerCase().includes('עברית')
+                );
+
+                console.log('Available Hebrew voices:', hebrewVoices.length);
+                console.log('Hebrew voices found:', hebrewVoices.map(v => `${v.name} (${v.lang})`));
+
+                const ttsMethodSelect = document.getElementById('ttsMethodSelect');
+                if (!ttsMethodSelect) return;
+
+                if (hebrewVoices.length > 0) {
+                    // Hebrew voices available - use local TTS
+                    ttsMethodSelect.value = 'playWithLocalTTS';
+                    console.log('✅ Hebrew voices found - selecting Local TTS');
+                } else {
+                    // No Hebrew voices - use Google TTS
+                    ttsMethodSelect.value = 'playWithGoogleTTS';
+                    console.log('❌ No Hebrew voices found - selecting Google TTS');
+                }
+
+                // Update the info text after selection
+                this.updateTTSMethodInfo();
+            }
+
+            async waitForVoices() {
+                return new Promise((resolve) => {
+                    const voices = speechSynthesis.getVoices();
+                    if (voices.length > 0) {
+                        resolve(voices);
+                    } else {
+                        speechSynthesis.onvoiceschanged = () => {
+                            resolve(speechSynthesis.getVoices());
+                        };
+                    }
+                });
             }
 
             selectLetter(letter) {
@@ -1850,18 +1671,23 @@
             async playWord() {
                 if (!this.currentWord) return;
 
-                // Check if this is a mobile device
-                // const isMobile = /Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+                // Get selected TTS method from dropdown
+                const ttsMethodSelect = document.getElementById('ttsMethodSelect');
+                const selectedMethod = ttsMethodSelect ? ttsMethodSelect.value : 'playWithGoogleTTS';
 
-                // if (isMobile) {
-                //     // Use Google TTS for mobile devices
-                //     this.playWithGoogleTTS();
-                // } else {
-                //     // Use local TTS for PC browsers (original code)
-                //     this.playWithLocalTTS();
-                // }
-
-                this.playWithLocalTTS();
+                // Call the appropriate TTS method
+                switch (selectedMethod) {
+                    case 'playWithLocalTTS':
+                        this.playWithLocalTTS();
+                        break;
+                    case 'playWithGoogleTTSProxy':
+                        this.playWithGoogleTTSProxy();
+                        break;
+                    case 'playWithGoogleTTS':
+                    default:
+                        this.playWithGoogleTTS();
+                        break;
+                }
             }
 
             async playWithLocalTTS() {
@@ -1950,7 +1776,7 @@
                     audio.onerror = () => {
                         console.log('Google TTS failed, trying local TTS as fallback');
                         this.showFeedback('🌐 Google TTS לא זמין, מנסה קול מקומי', 'info');
-                        this.playWithLocalTTS();
+                        // this.playWithLocalTTS();
                     };
 
                     await audio.play();
@@ -1959,6 +1785,82 @@
                     console.error('Google TTS error:', error);
                     this.showFeedback('🌐 שגיאה ב-Google TTS, מנסה קול מקומי', 'info');
                     // Fallback to local TTS
+                    // this.playWithLocalTTS();
+                }
+            }
+
+            async playWithGoogleTTSProxy() {
+                try {
+                    console.log('🔊 Starting Google TTS with proxy...');
+
+                    const word = encodeURIComponent(this.currentWord.word);
+                    const googleTTSUrl = `https://translate.google.com/translate_tts?ie=UTF-8&tl=he&client=tw-ob&q=${word}`;
+                    const proxyUrl = 'https://api.codetabs.com/v1/proxy?quest=';
+                    const fullUrl = proxyUrl + encodeURIComponent(googleTTSUrl);
+
+                    console.log('Word:', this.currentWord.word);
+                    console.log('Using proxy URL:', fullUrl);
+
+                    // First test if we can fetch the audio data
+                    const response = await fetch(fullUrl, {
+                        method: 'GET',
+                        cache: 'no-cache'
+                    });
+
+                    console.log('Proxy response status:', response.status);
+
+                    if (!response.ok) {
+                        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                    }
+
+                    // Get the audio blob
+                    const audioBlob = await response.blob();
+                    console.log('Audio blob received:', {
+                        size: audioBlob.size,
+                        type: audioBlob.type
+                    });
+
+                    if (audioBlob.size === 0) {
+                        throw new Error('Empty audio blob received');
+                    }
+
+                    // Create audio URL and play
+                    const audioUrl = URL.createObjectURL(audioBlob);
+                    const audio = new Audio(audioUrl);
+
+                    // Add event listeners
+                    audio.onended = () => {
+                        URL.revokeObjectURL(audioUrl); // Clean up
+                    };
+
+                    audio.onerror = (error) => {
+                        console.error('Audio playback error:', error);
+                        URL.revokeObjectURL(audioUrl); // Clean up
+                        this.showFeedback('🔊 שגיאה בהשמעת הקול', 'info');
+                    };
+
+                    // Attempt to play
+                    await audio.play();
+                    console.log('✅ Proxy TTS playback successful!');
+
+                    // Show success feedback
+                    this.showFeedback(`🔊 משמיע: ${this.currentWord.word} (Proxy)`, 'success');
+
+                } catch (error) {
+                    console.error('❌ Google TTS with proxy failed:', error);
+
+                    if (error.name === 'TypeError' && error.message.includes('Failed to fetch')) {
+                        this.showFeedback('🌐 בעיית רשת - לא ניתן להתחבר לשירות Proxy', 'info');
+                    } else if (error.message.includes('HTTP')) {
+                        this.showFeedback(`🌐 שגיאת Proxy: ${error.message}`, 'info');
+                    } else if (error.name === 'NotAllowedError') {
+                        this.showFeedback('🔊 יש לאשר השמעת קול בדפדפן', 'info');
+                    } else {
+                        this.showFeedback(`🔊 שגיאת Proxy: ${error.message}`, 'info');
+                    }
+
+                    // Fallback to local TTS
+                    console.log('Falling back to local TTS...');
                     this.playWithLocalTTS();
                 }
             }
