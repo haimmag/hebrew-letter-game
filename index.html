@@ -674,8 +674,7 @@
     </div>
 
     <!-- Voice Selection Dropdown -->
-    <div class="voice-selection"
-        style="margin: 15px 0; padding: 15px;">
+    <div class="voice-selection" style="margin: 15px 0; padding: 15px;">
         <label for="voiceSelect" style="display: block; margin-bottom: 8px; font-weight: bold;">🎤
             בחר קול להשמעה:</label>
         <select id="voiceSelect"
@@ -1621,7 +1620,7 @@
                 console.log('Words display populated with', allWords.length, 'words');
             }
 
-            populateVoicesDisplay() {
+            async populateVoicesDisplay() {
                 const voicesList = document.getElementById('voicesList');
                 if (!voicesList) {
                     console.log('voicesList element not found');
@@ -1629,15 +1628,22 @@
                 }
 
                 // Clear existing content
-                voicesList.innerHTML = '';
+                voicesList.innerHTML = '<div class="voice-item">Loading voices...</div>';
 
-                // Get available voices
-                const voices = speechSynthesis.getVoices();
+                try {
+                    // Wait for voices to be loaded properly
+                    const voices = await this.waitForVoices();
 
-                if (voices.length === 0) {
-                    // If no voices loaded yet, try again after a short delay
-                    setTimeout(() => this.populateVoicesDisplay(), 100);
-                    voicesList.innerHTML = '<div class="voice-item">Loading voices...</div>';
+                    // Clear loading message
+                    voicesList.innerHTML = '';
+
+                    if (voices.length === 0) {
+                        voicesList.innerHTML = '<div class="voice-item">No voices available</div>';
+                        return;
+                    }
+                } catch (error) {
+                    console.error('Error loading voices:', error);
+                    voicesList.innerHTML = '<div class="voice-item">Error loading voices</div>';
                     return;
                 }
 
@@ -1730,10 +1736,9 @@
                         voiceSelect.appendChild(otherGroup);
                     }
 
-                    // Set default selection (prefer Hebrew voice, especially Carmit)
-                    const carmitVoice = voices.find(voice => voice.name.toLowerCase().includes('carmit'));
-                    const defaultHebrewVoice = hebrewVoices.find(voice => voice.default) || hebrewVoices[0];
-                    const defaultVoice = carmitVoice || defaultHebrewVoice || voices.find(voice => voice.default) || voices[0];
+                    // Set default selection (prefer Hebrew voice)
+                    const hebrewVoice = hebrewVoices.find(voice => voice.default) || hebrewVoices[0];
+                    const defaultVoice = hebrewVoice || voices.find(voice => voice.default) || voices[0];
 
                     if (defaultVoice) {
                         voiceSelect.value = defaultVoice.name;
@@ -1790,7 +1795,7 @@
 
                 // Populate displays after DOM elements are ready
                 this.populateWordsDisplay();
-                this.populateVoicesDisplay();
+                this.populateVoicesDisplay(); // Now async but doesn't need await
             }
 
             setupEventListeners() {
@@ -1884,7 +1889,7 @@
                             const availableVoices = speechSynthesis.getVoices();
                             console.log('No voice selected, finding best voice from:', availableVoices.map(v => `${v.name} (${v.lang})`));
 
-                            // First try Hebrew voices
+                            // First try any Hebrew voices
                             selectedVoice = availableVoices.find(voice =>
                                 voice.lang.startsWith('he') || voice.lang.includes('IL')
                             );
