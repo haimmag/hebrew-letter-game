@@ -1584,11 +1584,8 @@
                         infoText = 'נבחר: TTS מקומי (דפדפן) - משתמש בקולות המערכת';
                         break;
                     case 'playWithGoogleTTSProxy':
-                        infoText = 'נבחר: Google TTS (דרך Proxy) - עוקף חסימות CORS';
-                        break;
-                    case 'playWithGoogleTTS':
                     default:
-                        infoText = 'נבחר: Google TTS (ישיר) - זמין ברוב הדפדפנים';
+                        infoText = 'נבחר: Google TTS (דרך Proxy) - עוקף חסימות CORS';
                         break;
                 }
 
@@ -1618,9 +1615,9 @@
                     ttsMethodSelect.value = 'playWithLocalTTS';
                     console.log('✅ Hebrew voices found - selecting Local TTS');
                 } else {
-                    // No Hebrew voices - use Google TTS
-                    ttsMethodSelect.value = 'playWithGoogleTTS';
-                    console.log('❌ No Hebrew voices found - selecting Google TTS');
+                    // No Hebrew voices - use Google TTS Proxy
+                    ttsMethodSelect.value = 'playWithGoogleTTSProxy';
+                    console.log('❌ No Hebrew voices found - selecting Google TTS Proxy');
                 }
 
                 // Update the info text after selection
@@ -1673,7 +1670,7 @@
 
                 // Get selected TTS method from dropdown
                 const ttsMethodSelect = document.getElementById('ttsMethodSelect');
-                const selectedMethod = ttsMethodSelect ? ttsMethodSelect.value : 'playWithGoogleTTS';
+                const selectedMethod = ttsMethodSelect ? ttsMethodSelect.value : 'playWithLocalTTS';
 
                 // Call the appropriate TTS method
                 switch (selectedMethod) {
@@ -1681,11 +1678,8 @@
                         this.playWithLocalTTS();
                         break;
                     case 'playWithGoogleTTSProxy':
-                        this.playWithGoogleTTSProxy();
-                        break;
-                    case 'playWithGoogleTTS':
                     default:
-                        this.playWithGoogleTTS();
+                        this.playWithGoogleTTSProxy();
                         break;
                 }
             }
@@ -1699,6 +1693,23 @@
 
                         // Wait for voices to be loaded with Promise-based approach
                         const voices = await this.waitForVoices();
+
+                        // Check if Hebrew voices are available
+                        const hebrewVoices = voices.filter(voice =>
+                            voice.lang.toLowerCase().includes('he') ||
+                            voice.lang.toLowerCase().includes('iw') ||
+                            voice.name.toLowerCase().includes('hebrew') ||
+                            voice.name.toLowerCase().includes('עברית') ||
+                            voice.lang.startsWith('he') ||
+                            voice.lang.includes('IL')
+                        );
+
+                        // If no Hebrew voices available, fallback to Google TTS Proxy
+                        if (hebrewVoices.length === 0) {
+                            console.log('No Hebrew voices available in local TTS, falling back to Google TTS Proxy');
+                            this.showFeedback('🔊 אין קולות עבריים זמינים, משתמש ב-Google TTS', 'info');
+                            return this.playWithGoogleTTSProxy();
+                        }
 
                         const utterance = new SpeechSynthesisUtterance(this.currentWord.word);
 
@@ -1764,30 +1775,7 @@
                 }
             }
 
-            async playWithGoogleTTS() {
-                try {
-                    // Use Google Translate TTS API for mobile
-                    const word = encodeURIComponent(this.currentWord.word);
-                    const audioUrl = `https://translate.google.com/translate_tts?ie=UTF-8&tl=he&client=tw-ob&q=${word}`;
 
-                    const audio = new Audio(audioUrl);
-                    audio.crossOrigin = 'anonymous';
-
-                    audio.onerror = () => {
-                        console.log('Google TTS failed, trying local TTS as fallback');
-                        this.showFeedback('🌐 Google TTS לא זמין, מנסה קול מקומי', 'info');
-                        // this.playWithLocalTTS();
-                    };
-
-                    await audio.play();
-
-                } catch (error) {
-                    console.error('Google TTS error:', error);
-                    this.showFeedback('🌐 שגיאה ב-Google TTS, מנסה קול מקומי', 'info');
-                    // Fallback to local TTS
-                    // this.playWithLocalTTS();
-                }
-            }
 
             async playWithGoogleTTSProxy() {
                 try {
