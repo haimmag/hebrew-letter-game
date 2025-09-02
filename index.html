@@ -1782,6 +1782,30 @@
 
                     const word = encodeURIComponent(this.currentWord.word);
                     const googleTTSUrl = `https://translate.google.com/translate_tts?ie=UTF-8&tl=he&client=tw-ob&q=${word}`;
+
+                    // Detect mobile devices (especially iPhone)
+                    const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+
+                    // For mobile devices, try direct Google TTS first (often works better)
+                    if (isMobile) {
+                        console.log('Mobile device detected, trying direct Google TTS first...');
+                        try {
+                            const directAudio = new Audio(googleTTSUrl);
+                            directAudio.crossOrigin = 'anonymous';
+
+                            directAudio.muted = false;
+                            directAudio.volume = 1.0;
+                            directAudio.preload = 'auto';
+
+                            await directAudio.play();
+                            console.log('✅ Direct Google TTS successful on mobile!');
+                            this.showFeedback(`🔊 משמיע: ${this.currentWord.word}`, 'success');
+                            return;
+                        } catch (directError) {
+                            console.log('Direct Google TTS failed on mobile, trying proxy...', directError);
+                        }
+                    }
+
                     const proxyUrl = 'https://api.codetabs.com/v1/proxy?quest=';
                     const fullUrl = proxyUrl + encodeURIComponent(googleTTSUrl);
 
@@ -1814,6 +1838,13 @@
                     // Create audio URL and play
                     const audioUrl = URL.createObjectURL(audioBlob);
                     const audio = new Audio(audioUrl);
+
+                    // iPhone-specific audio settings
+                    if (isMobile) {
+                        audio.muted = false;
+                        audio.volume = 1.0;
+                        audio.preload = 'auto';
+                    }
 
                     // Add event listeners
                     audio.onended = () => {
