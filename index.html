@@ -1777,92 +1777,89 @@
 
 
             async playWithGoogleTTSProxy() {
+                // Check if the browser supports web audio. Safari wants a prefix.
+                if (!('AudioContext' in window || 'webkitAudioContext' in window)) {
+                    console.log('Web Audio not supported, falling back to local TTS');
+                    return this.playWithLocalTTS();
+                }
+
                 try {
                     console.log('🔊 Starting Google TTS with proxy...');
 
                     const word = encodeURIComponent(this.currentWord.word);
                     const googleTTSUrl = `https://translate.google.com/translate_tts?ie=UTF-8&tl=he&client=tw-ob&q=${word}`;
-
-                    // Detect mobile devices (especially iPhone)
-                    const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-
-                    // For mobile devices, try direct Google TTS first (often works better)
-                    if (isMobile) {
-                        console.log('Mobile device detected, trying direct Google TTS first...');
-                        try {
-                            const directAudio = new Audio(googleTTSUrl);
-                            directAudio.crossOrigin = 'anonymous';
-
-                            directAudio.muted = false;
-                            directAudio.volume = 1.0;
-                            directAudio.preload = 'auto';
-
-                            await directAudio.play();
-                            console.log('✅ Direct Google TTS successful on mobile!');
-                            this.showFeedback(`🔊 משמיע: ${this.currentWord.word}`, 'success');
-                            return;
-                        } catch (directError) {
-                            console.log('Direct Google TTS failed on mobile, trying proxy...', directError);
-                        }
-                    }
-
                     const proxyUrl = 'https://api.codetabs.com/v1/proxy?quest=';
-                    const fullUrl = proxyUrl + encodeURIComponent(googleTTSUrl);
+                    const URL = proxyUrl + encodeURIComponent(googleTTSUrl);
 
                     console.log('Word:', this.currentWord.word);
-                    console.log('Using proxy URL:', fullUrl);
+                    console.log('Using proxy URL:', URL);
 
-                    // First test if we can fetch the audio data
-                    const response = await fetch(fullUrl, {
-                        method: 'GET',
-                        cache: 'no-cache'
-                    });
+                    // Initialize AudioContext - Make it crossbrowser
+                    if (!this.audioContext) {
+                        const AudioContext = window.AudioContext || window.webkitAudioContext;
+                        this.audioContext = new AudioContext();
+                        this.gainNode = this.audioContext.createGain();
+                        this.gainNode.gain.value = 1; // set volume to 100%
+                    }
 
-                    console.log('Proxy response status:', response.status);
+                    //////////////////////////////////////////////////
+                    // Here's the part for just playing an audio file.
+                    //////////////////////////////////////////////////
+                    const play = (audioBuffer) => {
+                        const source = this.audioContext.createBufferSource();
+                        source.buffer = audioBuffer;
+                        source.connect(this.audioContext.destination);
+                        source.start();
+
+                        console.log('✅ Proxy TTS playback successful!');
+                        this.showFeedback(`🔊 משמיע: ${this.currentWord.word} (Proxy)`, 'success');
+                    };
+
+                    //////////////////////////////////////////////////
+                    // Here's the part for unlocking the audio context, probably for iOS only
+                    //////////////////////////////////////////////////
+                    const unlock = () => {
+                        console.log("unlocking audio context");
+                        // create empty buffer and play it
+                        const buffer = this.audioContext.createBuffer(1, 1, 22050);
+                        const source = this.audioContext.createBufferSource();
+                        source.buffer = buffer;
+                        source.connect(this.audioContext.destination);
+
+                        // play the file. noteOn is the older version of start()
+                        source.start ? source.start(0) : source.noteOn(0);
+
+                        // by checking the play state after some time, we know if we're really unlocked
+                        setTimeout(() => {
+                            if ((source.playbackState === source.PLAYING_STATE || source.playbackState === source.FINISHED_STATE)) {
+                                console.log("Audio context unlocked successfully");
+                            }
+                        }, 0);
+                    };
+
+                    // Try to unlock audio context for iOS
+                    unlock();
+
+                    // The Promise-based syntax for BaseAudioContext.decodeAudioData() is not supported in Safari(Webkit).
+                    const response = await window.fetch(URL);
 
                     if (!response.ok) {
                         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
                     }
 
-                    // Get the audio blob
-                    const audioBlob = await response.blob();
-                    console.log('Audio blob received:', {
-                        size: audioBlob.size,
-                        type: audioBlob.type
-                    });
+                    const arrayBuffer = await response.arrayBuffer();
 
-                    if (audioBlob.size === 0) {
-                        throw new Error('Empty audio blob received');
-                    }
-
-                    // Create audio URL and play
-                    const audioUrl = URL.createObjectURL(audioBlob);
-                    const audio = new Audio(audioUrl);
-
-                    // iPhone-specific audio settings
-                    if (isMobile) {
-                        audio.muted = false;
-                        audio.volume = 1.0;
-                        audio.preload = 'auto';
-                    }
-
-                    // Add event listeners
-                    audio.onended = () => {
-                        URL.revokeObjectURL(audioUrl); // Clean up
-                    };
-
-                    audio.onerror = (error) => {
-                        console.error('Audio playback error:', error);
-                        URL.revokeObjectURL(audioUrl); // Clean up
-                        this.showFeedback('🔊 שגיאה בהשמעת הקול', 'info');
-                    };
-
-                    // Attempt to play
-                    await audio.play();
-                    console.log('✅ Proxy TTS playback successful!');
-
-                    // Show success feedback
-                    this.showFeedback(`🔊 משמיע: ${this.currentWord.word} (Proxy)`, 'success');
+                    // Use callback-based decodeAudioData for Safari compatibility
+                    this.audioContext.decodeAudioData(
+                        arrayBuffer,
+                        audioBuffer => {
+                            play(audioBuffer);
+                        },
+                        error => {
+                            console.error('Audio decode error:', error);
+                            throw error;
+                        }
+                    );
 
                 } catch (error) {
                     console.error('❌ Google TTS with proxy failed:', error);
