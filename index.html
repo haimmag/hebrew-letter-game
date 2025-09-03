@@ -1942,7 +1942,7 @@
                             const audioBlob = new Blob(this.audioChunks, {
                                 type: this.mediaRecorder.mimeType || 'audio/wav'
                             });
-                            const audioUrl = window.nativeCreateObjectURL(audioBlob);
+                            const audioUrl = URL.createObjectURL(audioBlob);
                             this.recordedAudio = new Audio(audioUrl);
 
                             // Add error handling for audio loading
@@ -2023,14 +2023,14 @@
             downloadGame() {
                 const htmlContent = document.documentElement.outerHTML;
                 const blob = new Blob([htmlContent], { type: 'text/html' });
-                const url = window.nativeCreateObjectURL(blob);
+                const url = URL.createObjectURL(blob);
 
                 const a = document.createElement('a');
                 a.href = url;
                 a.download = 'hebrew-letter-game.html';
                 a.click();
 
-                window.nativeRevokeObjectURL(url);
+                URL.revokeObjectURL(url);
                 this.showFeedback('המשחק נשמר! פתח את הקובץ בדפדפן', 'success');
             }
 
